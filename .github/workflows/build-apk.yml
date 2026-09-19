@@ -1,0 +1,136 @@
+# Builds the VPNoverSSH APK from the repository (no local toolchain needed).
+#
+# Usage: Actions tab -> "Build APK" -> Run workflow.
+#   build_type=debug    (default) unsigned-by-convention debug APK, installable
+#                       directly for testing (signed with a throwaway debug key).
+#   build_type=release  requires the four signing secrets below; produces a
+#                       v1+v2 signed APK.
+#
+# Release signing secrets (Settings -> Secrets and variables -> Actions):
+#   KEYSTORE_BASE64     `base64 -w0 keystore.jks` (single line)
+#   KEYSTORE_PASSWORD
+#   KEY_ALIAS
+#   KEY_PASSWORD
+
+name: Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'APK type to build'
+        required: false
+        type: choice
+        default: 'debug'
+        options:
+          - debug
+          - release
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-24.04
+    env:
+      CMDLINE_TOOLS_BUILD: '11076708'
+      NDK_VERSION: '25.2.9519653'
+      # Self-contained SDK: the ubuntu-24.04 runner image does not reliably
+      # provide sdkmanager on PATH, so we install everything ourselves.
+      ANDROID_HOME: ${{ github.workspace }}/android-sdk
+      ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android command-line tools
+        run: |
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          curl -fsSL -o /tmp/cmdline-tools.zip \
+            "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_BUILD}_latest.zip"
+          unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager --verbose \
+            "ndk;${NDK_VERSION}" \
+            "platforms;android-33" \
+            "build-tools;30.0.3" \
+            "build-tools;33.0.1"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Build debug APK
+        if: ${{ inputs.build_type == 'debug' }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Build release APK (unsigned)
+        if: ${{ inputs.build_type == 'release' }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace assembleRelease
+
+      - name: Check signing secrets
+        if: ${{ inputs.build_type == 'release' }}
+        env:
+          KS: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KS" ]; then
+            echo "::error::release builds require the signing secrets KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD (see the workflow header)"
+            exit 1
+          fi
+
+      - name: Zipalign and sign release APK
+        if: ${{ inputs.build_type == 'release' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$BT/zipalign" -p -f 4 \
+            app/build/outputs/apk/release/app-release-unsigned.apk \
+            app/build/outputs/apk/release/app-release-aligned.apk
+          "$BT/apksigner" sign \
+            --ks keystore.jks \
+            --ks-pass "env:KEYSTORE_PASSWORD" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass "env:KEY_PASSWORD" \
+            --out app/build/outputs/apk/release/VPNoverSSH-release.apk \
+            app/build/outputs/apk/release/app-release-aligned.apk
+          "$BT/apksigner" verify \
+            app/build/outputs/apk/release/VPNoverSSH-release.apk
+          rm -f keystore.jks
+
+      - name: Upload debug APK
+        if: ${{ inputs.build_type == 'debug' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpnoverssh-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 90
+
+      - name: Upload release APK
+        if: ${{ inputs.build_type == 'release' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpnoverssh-release
+          path: app/build/outputs/apk/release/VPNoverSSH-release.apk
+          retention-days: 90
