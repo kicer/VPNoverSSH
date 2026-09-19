@@ -27,4 +27,11 @@
         app:summary="@string/apps_description"
         app:useSimpleSummaryProvider="true" />
 
+    <SwitchPreferenceCompat
+        app:key="hide_system_apps"
+        app:icon="@drawable/baseline_apps_24"
+        app:title="@string/hide_system_apps_title"
+        app:summary="@string/hide_system_apps_description"
+        app:defaultValue="true" />
+
 </PreferenceScreen>

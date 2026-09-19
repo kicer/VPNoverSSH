@@ -139,7 +139,7 @@ public class SettingsActivity extends AppCompatActivity implements
         private Future<List<AppInfo>> getApps(Context context) {
             return executor.submit(() -> {
                 AppInfoExtractor appInfoExtractor = new AppInfoExtractor(context.getPackageManager());
-                return appInfoExtractor.getAllInstalledApps();
+                return appInfoExtractor.getLaunchableApps();
             });
         }
 
@@ -194,8 +194,20 @@ public class SettingsActivity extends AppCompatActivity implements
                         }
                     }
                     try {
-                        adapter = new AppInfoAdapter(getAppsFuture.get());
-                        adapter.setSelectedApps(getSelectedAppsFuture.get());
+                        List<AppInfo> launchableApps = getAppsFuture.get();
+                        Set<String> selected = getSelectedAppsFuture.get();
+                        boolean hideSystemApps = sharedPreferences.getBoolean("hide_system_apps", true);
+                        // Already-selected apps are never hidden, otherwise a
+                        // selection could not be revoked anymore.
+                        List<AppInfo> visibleApps = new ArrayList<>();
+                        for (AppInfo appInfo : launchableApps) {
+                            if (!appInfo.isSystemApp() || !hideSystemApps
+                                    || selected.contains(appInfo.getPackageName())) {
+                                visibleApps.add(appInfo);
+                            }
+                        }
+                        adapter = new AppInfoAdapter(visibleApps);
+                        adapter.setSelectedApps(selected);
                     } catch (ExecutionException | InterruptedException e) {
                         mSwipeRefreshLayout.setRefreshing(false);
                         throw new RuntimeException(e);
