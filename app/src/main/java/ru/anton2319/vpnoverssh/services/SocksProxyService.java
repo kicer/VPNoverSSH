@@ -162,7 +162,10 @@ public class SocksProxyService extends VpnService {
             key.setMTU(1500);
             key.setDevice("fd://" + vpnInterface.getFd());
             key.setInterface("");
-            key.setLogLevel("warning");
+            // "info" so the engine's "DNS server listening at ..." line is
+            // visible when remote DNS is on (bind failure shows at "error"
+            // either way); keep "warning" for the legacy path.
+            key.setLogLevel(remoteDns ? "info" : "warning");
             key.setProxy("socks5://127.0.0.1:"+socksPort);
             key.setRestAPI("");
             key.setTCPSendBufferSize("");
