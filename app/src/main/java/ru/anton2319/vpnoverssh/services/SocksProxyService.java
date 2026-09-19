@@ -29,19 +29,12 @@ public class SocksProxyService extends VpnService {
 
     private static final String TAG = "SocksProxyService";
 
-    // Fake DNS settings. The values must match the remote DNS implementation
-    // in the patched tun2socks build (xjasonlyu/tun2socks PR #374, built by
-    // .github/workflows/build-tun2socks-aar.yml): a DNS server listening on
-    // the system stack answers A queries with addresses from this pool and
-    // connections to fake IPs are relayed to the proxy by domain name.
-    //
-    // It must NOT listen on loopback: VpnService.Builder.addDnsServer()
-    // rejects 127.0.0.1 with "Bad address". Instead it uses the tunnel's own
-    // address (assigned below via addAddress), so the kernel treats DNS
-    // packets for it as locally delivered and hands them to the fake DNS
-    // server's socket without ever queueing them into the TUN device.
-    private static final String FAKE_DNS_SERVER = "26.26.26.1";
-    private static final String FAKE_DNS_LISTEN_ADDRESS = "26.26.26.1:53";
+    // Fake DNS settings. The values must match the tun2socks build produced
+    // by .github/workflows/build-tun2socks-aar.yml: xjasonlyu/tun2socks PR
+    // #374 (remote DNS: fake-ip pool + SOCKS5 domain-name relay) with the
+    // Android adaptation from patches/tun2socks-android-fakedns/ - DNS is
+    // answered inside the TUN stack, because an app process cannot bind UDP
+    // port 53 on the system stack (privileged port, no CAP_NET_BIND_SERVICE).
     private static final String FAKE_DNS_NET_IPV4 = "198.18.0.0/15";
 
     private ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -120,12 +113,13 @@ public class SocksProxyService extends VpnService {
             boolean remoteDns = sharedPreferences.getBoolean("remote_dns_enabled", false);
             Set<String> selectedApps = getSelectedAppsFuture.get();
             if (remoteDns) {
-                // All traffic is sent into the tunnel; DNS queries to the
-                // tunnel's own address are answered by the fake DNS server
-                // running inside the tun2socks engine, so nothing needs to
-                // bypass the tunnel.
+                // The patched engine answers DNS queries that arrive inside
+                // the tunnel from a local fake-IP pool. The resolver IP here
+                // is only the mailbox address apps send queries to - it must
+                // NOT get an exclude route; the real resolving happens on the
+                // SSH server side, as connections are relayed by domain name.
                 builder.addRoute("0.0.0.0", 0);
-                builder.addDnsServer(FAKE_DNS_SERVER);
+                builder.addDnsServer(getDnsIpFuture.get());
             } else if (android.os.Build.VERSION.SDK_INT >= 33) {
                 builder.addRoute(new IpPrefix(InetAddress.getByName("0.0.0.0"), 0));
                 builder.excludeRoute(new IpPrefix(InetAddress.getByName(getDnsIpFuture.get()), 32));
@@ -162,10 +156,7 @@ public class SocksProxyService extends VpnService {
             key.setMTU(1500);
             key.setDevice("fd://" + vpnInterface.getFd());
             key.setInterface("");
-            // "info" so the engine's "DNS server listening at ..." line is
-            // visible when remote DNS is on (bind failure shows at "error"
-            // either way); keep "warning" for the legacy path.
-            key.setLogLevel(remoteDns ? "info" : "warning");
+            key.setLogLevel("warning");
             key.setProxy("socks5://127.0.0.1:"+socksPort);
             key.setRestAPI("");
             key.setTCPSendBufferSize("");
@@ -173,7 +164,10 @@ public class SocksProxyService extends VpnService {
             key.setTCPModerateReceiveBuffer(false);
             key.setFakeDNS(remoteDns);
             key.setFakeDNSNetIPv4(FAKE_DNS_NET_IPV4);
-            key.setFakeDNSListenAddress(FAKE_DNS_LISTEN_ADDRESS);
+            // Empty on purpose: it disables PR #374's system-stack UDP/53
+            // listener (which apps cannot bind); the Android-adapted engine
+            // registers the fake-ip pool and answers inside the TUN stack.
+            key.setFakeDNSListenAddress("");
 
             engine.Engine.insert(key);
             engine.Engine.start();

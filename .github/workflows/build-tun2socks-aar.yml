@@ -1,5 +1,7 @@
 # Builds tun2socks.aar with remote DNS support, as implemented in
-# xjasonlyu/tun2socks PR #374 (final commit b69e505 "Implement fake DNS").
+# xjasonlyu/tun2socks PR #374 (final commit b69e505 "Implement fake DNS"),
+# plus the Android adaptation from patches/tun2socks-android-fakedns/
+# (fake DNS answered inside the TUN stack; apps cannot bind UDP port 53).
 #
 # The build is a standard `gomobile bind` of the tun2socks `engine` package,
 # which produces exactly the same AAR layout as the one currently vendored in
@@ -47,6 +49,9 @@ jobs:
       ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
 
     steps:
+      - name: Checkout this repository (for patches)
+        uses: actions/checkout@v4
+
       - name: Checkout tun2socks
         uses: actions/checkout@v4
         with:
@@ -86,6 +91,27 @@ jobs:
 
       - name: Initialize gomobile
         run: gomobile init
+
+      - name: Apply Android fake-DNS adaptation
+        working-directory: tun2socks
+        run: |
+          # PR #374 answers DNS from a system-stack UDP/53 server, which an
+          # app process cannot bind (privileged port, no CAP_NET_BIND_SERVICE).
+          # Move the answer point into the TUN stack instead: drop in the
+          # intercept helper and hook it into tunnel/udp.go before the proxy
+          # dial, gated on destination port 53.
+          cp "$GITHUB_WORKSPACE/patches/tun2socks-android-fakedns/dns/intercept.go" dns/intercept.go
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("tunnel/udp.go")
+          src = p.read_text()
+          anchor = "\tpc, err := proxy.DialUDP(metadata)"
+          hook = ("\tif id.LocalPort == 53 && dns.Intercept(uc) {\n\t\treturn\n\t}\n\n" + anchor)
+          n = src.count(anchor)
+          assert n == 1, "unexpected anchor count in tunnel/udp.go: %d (PR head changed?)" % n
+          p.write_text(src.replace(anchor, hook))
+          print("tunnel/udp.go patched")
+          PY
 
       - name: Build AAR (all ABIs, min API 26)
         working-directory: tun2socks
