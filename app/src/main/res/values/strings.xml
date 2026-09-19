@@ -13,6 +13,8 @@
     <string name="dns_ip_description">Use a custom DNS server. Leave empty to use defaults. Warning! DNS queries will always bypass VPN.</string>
     <string name="apps_title">Included Apps</string>
     <string name="apps_description">Choose which apps will use the tunnel and which will connect directly. By default, all apps are included in the tunnel</string>
+    <string name="remote_dns_title">Remote DNS</string>
+    <string name="remote_dns_description">Resolve domain names on the proxy server side instead of locally (fake IP mode). DNS queries are answered locally from a fake IP pool, and connections are forwarded to the SOCKS5 server by domain name. The DNS Resolver IP above is ignored. Requires the remote DNS tun2socks build (see .github/workflows/build-tun2socks-aar.yml).</string>
 
 
     <!-- SSH Preferences -->

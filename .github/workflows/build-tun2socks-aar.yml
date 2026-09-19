@@ -1,0 +1,89 @@
+# Builds tun2socks.aar with remote DNS support, as implemented in
+# xjasonlyu/tun2socks PR #374 (final commit b69e505 "Implement fake DNS").
+#
+# The build is a standard `gomobile bind` of the tun2socks `engine` package,
+# which produces exactly the same AAR layout as the one currently vendored in
+# app/libs/ (classes.jar with engine.Key / engine.Engine + libgojni.so for
+# 4 ABIs).
+#
+# Usage:
+#   1. Run this workflow manually (Actions tab -> "Build tun2socks AAR" ->
+#      Run workflow).
+#   2. Download the `tun2socks-remote-dns` artifact from the run.
+#   3. Replace app/libs/tun2socks.aar with the `tun2socks.aar` from the
+#      artifact, commit, and build the app as usual.
+
+name: Build tun2socks AAR
+
+on:
+  workflow_dispatch:
+    inputs:
+      tun2socks_ref:
+        description: >-
+          tun2socks ref to build. Default is the head of PR #374 (remote DNS).
+        required: false
+        default: 'refs/pull/374/head'
+
+permissions:
+  contents: read
+
+jobs:
+  build-aar:
+    runs-on: ubuntu-24.04
+    env:
+      NDK_VERSION: '26.1.10909125'
+      # tun2socks PR #374 go.mod requires go 1.22; the `go` line here is kept
+      # compatible with it. GOTOOLCHAIN=auto lets gomobile@latest pull a newer
+      # toolchain for its own compilation if needed, without affecting the
+      # tun2socks build itself.
+      GO_VERSION: '1.22'
+      GOTOOLCHAIN: auto
+
+    steps:
+      - name: Checkout tun2socks
+        uses: actions/checkout@v4
+        with:
+          repository: xjasonlyu/tun2socks
+          ref: ${{ inputs.tun2socks_ref }}
+          path: tun2socks
+
+      - name: Show revision being built
+        run: git -C tun2socks log -1 --oneline
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: tun2socks/go.sum
+
+      - name: Install Android NDK
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "ndk;${NDK_VERSION}"
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Initialize gomobile
+        run: gomobile init
+
+      - name: Build AAR (all ABIs, min API 26)
+        working-directory: tun2socks
+        run: |
+          gomobile bind -v \
+            -target=android \
+            -androidapi 26 \
+            -ldflags="-s -w" \
+            -o tun2socks.aar \
+            ./engine
+
+      - name: Upload AAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: tun2socks-remote-dns
+          path: tun2socks/tun2socks.aar
+          retention-days: 90

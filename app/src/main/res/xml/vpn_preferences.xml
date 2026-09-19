@@ -12,6 +12,13 @@
         app:useSimpleSummaryProvider="true"
         app:defaultValue="1.1.1.1" />
 
+    <SwitchPreferenceCompat
+        app:key="remote_dns_enabled"
+        app:icon="@drawable/baseline_dns_24"
+        app:title="@string/remote_dns_title"
+        app:summary="@string/remote_dns_description"
+        app:defaultValue="false" />
+
     <Preference
         app:fragment="ru.anton2319.vpnoverssh.SettingsActivity$AppsFragment"
         app:key="included_packages"

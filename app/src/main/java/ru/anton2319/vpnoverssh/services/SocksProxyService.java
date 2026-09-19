@@ -29,6 +29,15 @@ public class SocksProxyService extends VpnService {
 
     private static final String TAG = "SocksProxyService";
 
+    // Fake DNS settings. The values must match the remote DNS implementation
+    // in the patched tun2socks build (xjasonlyu/tun2socks PR #374, built by
+    // .github/workflows/build-tun2socks-aar.yml): a DNS server listening on
+    // the system loopback answers A queries with addresses from this pool and
+    // connections to fake IPs are relayed to the proxy by domain name.
+    private static final String FAKE_DNS_SERVER = "127.0.0.1";
+    private static final String FAKE_DNS_LISTEN_ADDRESS = "127.0.0.1:53";
+    private static final String FAKE_DNS_NET_IPV4 = "198.18.0.0/15";
+
     private ExecutorService executor = Executors.newSingleThreadExecutor();
 
     private Thread vpnThread;
@@ -102,20 +111,34 @@ public class SocksProxyService extends VpnService {
             ParcelFileDescriptor vpnInterface;
             Builder builder = new VpnService.Builder();
             builder.setMtu(1500).addAddress("26.26.26.1", 24);
-            if (android.os.Build.VERSION.SDK_INT >= 33) {
+            boolean remoteDns = sharedPreferences.getBoolean("remote_dns_enabled", false);
+            Set<String> selectedApps = getSelectedAppsFuture.get();
+            if (remoteDns) {
+                // All traffic (including DNS) is sent into the tunnel; DNS
+                // queries to 127.0.0.1 are answered by the fake DNS server
+                // running inside the tun2socks engine, so nothing needs to
+                // bypass the tunnel.
+                builder.addRoute("0.0.0.0", 0);
+                builder.addDnsServer(FAKE_DNS_SERVER);
+            } else if (android.os.Build.VERSION.SDK_INT >= 33) {
                 builder.addRoute(new IpPrefix(InetAddress.getByName("0.0.0.0"), 0));
                 builder.excludeRoute(new IpPrefix(InetAddress.getByName(getDnsIpFuture.get()), 32));
+                if (selectedApps.isEmpty()) {
+                    builder.addDnsServer(getDnsIpFuture.get());
+                }
             } else {
                 ArrayList<Long> excludedIps = new ArrayList<>();
                 excludedIps.add(ipATON(getDnsIpFuture.get()));
                 addRoutesExcluding(builder, excludedIps);
+                if (selectedApps.isEmpty()) {
+                    builder.addDnsServer(getDnsIpFuture.get());
+                }
             }
-            if (getSelectedAppsFuture.get().isEmpty()) {
-                builder.addDnsServer(getDnsIpFuture.get())
-                        .addDisallowedApplication("ru.anton2319.vpnoverssh");
+            if (selectedApps.isEmpty()) {
+                builder.addDisallowedApplication("ru.anton2319.vpnoverssh");
             }
             else {
-                for (String packageName : getSelectedAppsFuture.get()) {
+                for (String packageName : selectedApps) {
                     builder.addAllowedApplication(packageName);
                 }
             }
@@ -139,6 +162,9 @@ public class SocksProxyService extends VpnService {
             key.setTCPSendBufferSize("");
             key.setTCPReceiveBufferSize("");
             key.setTCPModerateReceiveBuffer(false);
+            key.setFakeDNS(remoteDns);
+            key.setFakeDNSNetIPv4(FAKE_DNS_NET_IPV4);
+            key.setFakeDNSListenAddress(FAKE_DNS_LISTEN_ADDRESS);
 
             engine.Engine.insert(key);
             engine.Engine.start();
