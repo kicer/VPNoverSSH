@@ -5,6 +5,9 @@
 #                       directly for testing (signed with a throwaway debug key).
 #   build_type=release  requires the four signing secrets below; produces a
 #                       v1+v2 signed APK.
+#   publish_release     default on: upload the APK to a rolling prerelease on
+#                       the Releases page (tag rolling-debug / rolling-release),
+#                       asset overwritten on every run.
 #
 # Release signing secrets (Settings -> Secrets and variables -> Actions):
 #   KEYSTORE_BASE64     `base64 -w0 keystore.jks` (single line)
@@ -25,9 +28,14 @@ on:
         options:
           - debug
           - release
+      publish_release:
+        description: 'Upload the APK to a rolling GitHub prerelease'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-apk:
@@ -134,3 +142,21 @@ jobs:
           name: vpnoverssh-release
           path: app/build/outputs/apk/release/VPNoverSSH-release.apk
           retention-days: 90
+
+      - name: Publish to rolling GitHub prerelease
+        if: ${{ inputs.publish_release }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_TYPE: ${{ inputs.build_type }}
+        run: |
+          if [ "$BUILD_TYPE" = debug ]; then
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+          else
+            APK="app/build/outputs/apk/release/VPNoverSSH-release.apk"
+          fi
+          TAG="rolling-$BUILD_TYPE"
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --prerelease \
+              --title "Rolling $BUILD_TYPE builds" \
+              --notes "Latest $BUILD_TYPE APK produced by the Build APK workflow. The asset is overwritten on every published run. Note: debug builds use an ephemeral CI signing key, so a new download cannot update-in-place over a previous one (uninstall first, or wire up a committed debug keystore for stable signing)."
+          gh release upload "$TAG" "$APK" --clobber
