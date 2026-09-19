@@ -32,10 +32,16 @@ public class SocksProxyService extends VpnService {
     // Fake DNS settings. The values must match the remote DNS implementation
     // in the patched tun2socks build (xjasonlyu/tun2socks PR #374, built by
     // .github/workflows/build-tun2socks-aar.yml): a DNS server listening on
-    // the system loopback answers A queries with addresses from this pool and
+    // the system stack answers A queries with addresses from this pool and
     // connections to fake IPs are relayed to the proxy by domain name.
-    private static final String FAKE_DNS_SERVER = "127.0.0.1";
-    private static final String FAKE_DNS_LISTEN_ADDRESS = "127.0.0.1:53";
+    //
+    // It must NOT listen on loopback: VpnService.Builder.addDnsServer()
+    // rejects 127.0.0.1 with "Bad address". Instead it uses the tunnel's own
+    // address (assigned below via addAddress), so the kernel treats DNS
+    // packets for it as locally delivered and hands them to the fake DNS
+    // server's socket without ever queueing them into the TUN device.
+    private static final String FAKE_DNS_SERVER = "26.26.26.1";
+    private static final String FAKE_DNS_LISTEN_ADDRESS = "26.26.26.1:53";
     private static final String FAKE_DNS_NET_IPV4 = "198.18.0.0/15";
 
     private ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -114,8 +120,8 @@ public class SocksProxyService extends VpnService {
             boolean remoteDns = sharedPreferences.getBoolean("remote_dns_enabled", false);
             Set<String> selectedApps = getSelectedAppsFuture.get();
             if (remoteDns) {
-                // All traffic (including DNS) is sent into the tunnel; DNS
-                // queries to 127.0.0.1 are answered by the fake DNS server
+                // All traffic is sent into the tunnel; DNS queries to the
+                // tunnel's own address are answered by the fake DNS server
                 // running inside the tun2socks engine, so nothing needs to
                 // bypass the tunnel.
                 builder.addRoute("0.0.0.0", 0);
