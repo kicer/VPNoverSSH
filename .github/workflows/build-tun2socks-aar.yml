@@ -33,12 +33,14 @@ jobs:
     env:
       NDK_VERSION: '26.1.10909125'
       CMDLINE_TOOLS_BUILD: '11076708'
-      # tun2socks PR #374 go.mod requires go 1.22; the `go` line here is kept
-      # compatible with it. GOTOOLCHAIN=auto lets gomobile@latest pull a newer
-      # toolchain for its own compilation if needed, without affecting the
-      # tun2socks build itself.
-      GO_VERSION: '1.22'
+      # gomobile@latest / x-mobile@latest currently require a recent Go
+      # toolchain; gvisor (used by tun2socks' netstack) tracks Go releases and
+      # builds fine. GOTOOLCHAIN=auto lets go fetch whatever toolchain a
+      # dependency asks for during `go get`, without affecting which toolchain
+      # actually compiles tun2socks.
+      GO_VERSION: '1.24'
       GOTOOLCHAIN: auto
+      XMOBILE_VERSION: latest
       # Self-contained SDK: the ubuntu-24.04 runner image does not reliably
       # provide sdkmanager on PATH, so we install everything ourselves.
       ANDROID_HOME: ${{ github.workspace }}/android-sdk
@@ -79,7 +81,7 @@ jobs:
 
       - name: Install gomobile
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gomobile@${XMOBILE_VERSION}
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Initialize gomobile
@@ -87,7 +89,19 @@ jobs:
 
       - name: Build AAR (all ABIs, min API 26)
         working-directory: tun2socks
+        env:
+          # gomobile bind injects code that imports golang.org/x/mobile/bind,
+          # which may not yet be listed in require; -mod=mod lets the go
+          # command update go.mod/go.sum during the build.
+          GOFLAGS: -mod=mod
         run: |
+          # gomobile requires golang.org/x/mobile to be in the bound module's
+          # dependency graph. Record the gobind tool + bind runtime package so
+          # gomobile's check passes and versions stay aligned with the
+          # installed gomobile.
+          go get -tool golang.org/x/mobile/cmd/gobind
+          go get golang.org/x/mobile/bind
+          go mod tidy
           gomobile bind -v \
             -target=android \
             -androidapi 26 \
