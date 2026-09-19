@@ -32,12 +32,17 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       NDK_VERSION: '26.1.10909125'
+      CMDLINE_TOOLS_BUILD: '11076708'
       # tun2socks PR #374 go.mod requires go 1.22; the `go` line here is kept
       # compatible with it. GOTOOLCHAIN=auto lets gomobile@latest pull a newer
       # toolchain for its own compilation if needed, without affecting the
       # tun2socks build itself.
       GO_VERSION: '1.22'
       GOTOOLCHAIN: auto
+      # Self-contained SDK: the ubuntu-24.04 runner image does not reliably
+      # provide sdkmanager on PATH, so we install everything ourselves.
+      ANDROID_HOME: ${{ github.workspace }}/android-sdk
+      ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
 
     steps:
       - name: Checkout tun2socks
@@ -57,16 +62,25 @@ jobs:
           cache: true
           cache-dependency-path: tun2socks/go.sum
 
-      - name: Install Android NDK
+      - name: Install Android command-line tools
+        run: |
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          curl -fsSL -o /tmp/cmdline-tools.zip \
+            "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_BUILD}_latest.zip"
+          unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+
+      - name: Install Android NDK and platform
         run: |
           yes | sdkmanager --licenses > /dev/null
-          sdkmanager "ndk;${NDK_VERSION}"
+          sdkmanager --verbose "ndk;${NDK_VERSION}" "platforms;android-34" "build-tools;34.0.0"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
 
       - name: Install gomobile
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
       - name: Initialize gomobile
         run: gomobile init
